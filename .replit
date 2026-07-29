@@ -23,3 +23,8 @@ args = "cd /home/runner/workspace/callsync-server && go build -o callsync-bin . 
 [[ports]]
 localPort = 8080
 externalPort = 80
+
+[deployment]
+deploymentTarget = "vm"
+run = ["cd /home/runner/workspace/callsync-server && ./callsync-bin"]
+build = ["cd /home/runner/workspace/callsync-server && go build -o callsync-bin ."]
