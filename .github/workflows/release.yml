@@ -17,13 +17,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.24.0
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
           cache: true
 
+      # ── Version ───────────────────────────────────────────────────────────
       - name: Extract version
         id: version
         working-directory: call-sync-client
@@ -31,53 +32,62 @@ jobs:
           VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
-          echo "Extracted version: $VERSION"
+          echo "Building version: $VERSION"
 
+      # ── Build ─────────────────────────────────────────────────────────────
       - name: Install dependencies
         working-directory: call-sync-client
         run: flutter pub get
 
       - name: Build release APK
         working-directory: call-sync-client
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --verbose
 
-      - name: Copy APK to workspace root
+      # ── Locate APK ────────────────────────────────────────────────────────
+      - name: Locate APK
+        id: apk
         run: |
-          APK_SRC="call-sync-client/build/app/outputs/flutter-apk/app-release.apk"
-          APK_DST="callsync-client-${{ steps.version.outputs.version }}.apk"
-          echo "Source: $APK_SRC"
-          ls -lh "$APK_SRC"
-          cp "$APK_SRC" "$APK_DST"
-          echo "Copied to: $APK_DST"
+          APK="call-sync-client/build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found at $APK"
+            find call-sync-client/build -name "*.apk" 2>/dev/null | head -5
+            exit 1
+          fi
+          echo "Found: $APK  ($(du -sh "$APK" | cut -f1))"
+          DEST="callsync-client-${{ steps.version.outputs.version }}.apk"
+          cp "$APK" "$DEST"
+          echo "dest=$DEST" >> "$GITHUB_OUTPUT"
 
-      - name: Upload APK as workflow artifact
+      # ── Upload as workflow artifact ───────────────────────────────────────
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: callsync-client-${{ steps.version.outputs.version }}
-          path: callsync-client-${{ steps.version.outputs.version }}.apk
+          path: ${{ steps.apk.outputs.dest }}
           retention-days: 30
 
-      - name: Delete existing tag and release (if any)
+      # ── GitHub Release ────────────────────────────────────────────────────
+      - name: Delete previous release/tag if exists
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete "${{ steps.version.outputs.tag }}" --yes 2>/dev/null || true
           git push --delete origin "${{ steps.version.outputs.tag }}" 2>/dev/null || true
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release with APK
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            "callsync-client-${{ steps.version.outputs.version }}.apk" \
+            "${{ steps.apk.outputs.dest }}" \
             --title "CallSync Client ${{ steps.version.outputs.version }}" \
             --notes "## CallSync Client ${{ steps.version.outputs.version }}
 
           Build automatique depuis \`main\`.
 
           ### Installation
-          1. Télécharger \`callsync-client-${{ steps.version.outputs.version }}.apk\`
-          2. Ouvrir le fichier sur votre appareil Android
-          3. Autoriser l'installation depuis des sources inconnues si demandé" \
+          1. Télécharger \`${{ steps.apk.outputs.dest }}\`
+          2. Ouvrir le fichier sur Android
+          3. Autoriser l'installation depuis sources inconnues si demandé" \
             --latest
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
