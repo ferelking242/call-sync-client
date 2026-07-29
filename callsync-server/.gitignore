@@ -1,0 +1,4 @@
+callsync-server
+callsync.db
+storage/
+*.db

@@ -1,0 +1,25 @@
+modules = ["go-1.21"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "CallSync Server"
+
+[[workflows.workflow]]
+name = "CallSync Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd /home/runner/workspace/callsync-server && go build -o callsync-bin . && ./callsync-bin"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
