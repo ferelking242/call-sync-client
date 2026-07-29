@@ -26,5 +26,5 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "vm"
-run = ["sh", "-c", "cd /home/runner/workspace/callsync-server && go build -o /tmp/callsync-bin . && /tmp/callsync-bin"]
-build = ["sh", "-c", "echo 'no separate build step'"]
+run = ["sh", "-c", "cd /home/runner/workspace/callsync-server && go build -mod=vendor -o /tmp/callsync-bin . && /tmp/callsync-bin"]
+build = ["sh", "-c", "echo 'deps vendored'"]
