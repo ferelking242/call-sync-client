@@ -134,7 +134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             keyboardType: TextInputType.url,
             decoration: InputDecoration(
               labelText: 'URL du serveur',
-              hintText: 'https://dazzling-gorgeous-aggregators--regav89124.replit.app',
+              hintText: 'https://vapid-pleasing-drawings--koyih59365.replit.app',
               prefixIcon: const Icon(Icons.language),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               filled: true,

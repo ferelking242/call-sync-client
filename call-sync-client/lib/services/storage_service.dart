@@ -37,7 +37,7 @@ class StorageService {
 
   static Future<String> getServerUrl() async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_keyServerUrl) ?? 'https://dazzling-gorgeous-aggregators--regav89124.replit.app';
+    return p.getString(_keyServerUrl) ?? 'https://vapid-pleasing-drawings--koyih59365.replit.app';
   }
 
   /// Stores URL without trailing slash.
