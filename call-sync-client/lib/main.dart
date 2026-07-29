@@ -3,12 +3,16 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'services/sync_service.dart';
 import 'services/storage_service.dart';
+import 'services/update_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => SyncService(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => SyncService()),
+        ChangeNotifierProvider(create: (_) => UpdateService()),
+      ],
       child: const CallSyncApp(),
     ),
   );

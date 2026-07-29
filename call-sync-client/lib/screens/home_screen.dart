@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/recording.dart';
 import '../services/sync_service.dart';
 import '../services/storage_service.dart';
+import '../services/update_service.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -33,6 +34,13 @@ class _HomeScreenState extends State<HomeScreen> {
         (p) { if (mounted) setState(() => _position = p); });
     _player.durationStream.listen(
         (d) { if (mounted && d != null) setState(() => _duration = d); });
+
+    // Auto-check for updates 6s after screen loads
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted) {
+        context.read<UpdateService>().checkForUpdate();
+      }
+    });
   }
 
   @override
@@ -276,16 +284,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sync  = context.watch<SyncService>();
-    final theme = Theme.of(context);
-    final recs  = _filtered(sync.records);
-    final miss  = sync.missingCount;
+    final sync   = context.watch<SyncService>();
+    final update = context.watch<UpdateService>();
+    final theme  = Theme.of(context);
+    final recs   = _filtered(sync.records);
+    final miss   = sync.missingCount;
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       appBar: _buildAppBar(theme, sync),
       body: Column(
         children: [
+          _UpdateBanner(service: update),
           _StatusBar(sync: sync),
           Expanded(
             child: !sync.isConnected && sync.records.isEmpty
@@ -1174,5 +1184,113 @@ class _MiniPlayer extends StatelessWidget {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+}
+
+// ── Update banner ─────────────────────────────────────────────────────────────
+
+class _UpdateBanner extends StatelessWidget {
+  final UpdateService service;
+  const _UpdateBanner({required this.service});
+
+  @override
+  Widget build(BuildContext context) {
+    final s     = service.status;
+    final theme = Theme.of(context);
+
+    if (s == UpdateStatus.idle ||
+        s == UpdateStatus.checking ||
+        s == UpdateStatus.upToDate) {
+      return const SizedBox.shrink();
+    }
+
+    final isDownloading = s == UpdateStatus.downloading;
+    final isInstalling  = s == UpdateStatus.installing;
+    final isAvailable   = s == UpdateStatus.available;
+    final isError       = s == UpdateStatus.error;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      color: isError
+          ? theme.colorScheme.errorContainer
+          : theme.colorScheme.primaryContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isError ? Icons.error_outline_rounded : Icons.system_update_rounded,
+                size: 18,
+                color: isError
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isError
+                      ? 'Mise à jour: ${service.errorMessage}'
+                      : isAvailable
+                          ? 'Mise à jour v${service.updateInfo?.remoteVersion} disponible'
+                          : isDownloading
+                              ? 'Téléchargement… ${service.downloadProgress}%'
+                              : 'Installation en cours…',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isError
+                        ? theme.colorScheme.onErrorContainer
+                        : theme.colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+              if (isAvailable)
+                TextButton(
+                  onPressed: service.downloadAndInstall,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: theme.colorScheme.primary,
+                  ),
+                  child: const Text('Installer',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              if (isError)
+                IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: service.dismiss,
+                  color: theme.colorScheme.onErrorContainer,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+            ],
+          ),
+          if (isDownloading) ...[
+            const SizedBox(height: 6),
+            LinearProgressIndicator(
+              value: service.downloadProgress / 100.0,
+              backgroundColor:
+                  theme.colorScheme.primary.withOpacity(0.15),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                  theme.colorScheme.primary),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ],
+          if (isInstalling) ...[
+            const SizedBox(height: 6),
+            LinearProgressIndicator(
+              backgroundColor:
+                  theme.colorScheme.primary.withOpacity(0.15),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                  theme.colorScheme.primary),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }

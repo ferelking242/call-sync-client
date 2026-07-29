@@ -1,0 +1,73 @@
+name: Build & Release Flutter APK
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'call-sync-client/pubspec.yaml'   # Trigger quand la version change
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Extract version
+        id: version
+        working-directory: call-sync-client
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        working-directory: call-sync-client
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: call-sync-client
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Rename APK
+        run: |
+          mv call-sync-client/build/app/outputs/flutter-apk/app-release.apk \
+             callsync-client-${{ steps.version.outputs.version }}.apk
+
+      - name: Delete existing release (if any)
+        continue-on-error: true
+        run: |
+          gh release delete ${{ steps.version.outputs.tag }} --yes || true
+          git push --delete origin ${{ steps.version.outputs.tag }} || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "CallSync Client ${{ steps.version.outputs.version }}"
+          body: |
+            ## CallSync Client ${{ steps.version.outputs.version }}
+            
+            Build automatique depuis la branche `main`.
+            
+            ### Installation
+            1. Télécharger `callsync-client-${{ steps.version.outputs.version }}.apk`
+            2. Ouvrir le fichier sur votre appareil Android
+            3. Autoriser l'installation depuis des sources inconnues si demandé
+          files: callsync-client-${{ steps.version.outputs.version }}.apk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
