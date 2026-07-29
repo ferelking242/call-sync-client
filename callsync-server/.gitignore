@@ -1,4 +1,5 @@
+callsync-bin
+callsync_server
 callsync-server
-callsync.db
-storage/
 *.db
+storage/
