@@ -69,15 +69,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (rec.localPath != null && File(rec.localPath!).existsSync()) {
         await _player.setFilePath(rec.localPath!);
       } else {
-        final streamUrl = sync.streamUrl(rec.id);
-        final headers   = sync.authHeaders;
-        if (streamUrl != null && headers != null) {
-          await _player.setUrl(streamUrl, headers: headers);
-          if (!rec.isDownloaded) sync.downloadOne(rec);
-        } else {
-          _snack('Non connecté au serveur', error: true);
+        if (!sync.isConnected) {
+          _snack('Pair hors ligne — réessayez quand il sera connecté',
+              error: true);
           return;
         }
+        _snack('Téléchargement du fichier avant lecture…');
+        await sync.downloadOne(rec);
+        if (rec.localPath == null || !File(rec.localPath!).existsSync()) {
+          _snack('Téléchargement impossible', error: true);
+          return;
+        }
+        await _player.setFilePath(rec.localPath!);
       }
       await _player.play();
     } catch (e) {
@@ -219,19 +222,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Icon(Icons.cloud_off_outlined,
                       size: 18, color: theme.colorScheme.error),
                 ),
-                title: const Text('Supprimer du serveur'),
+                title: const Text('Supprimer de ce téléphone'),
                 subtitle:
                     const Text('Suppression définitive — ne peut pas être annulée'),
                 onTap: () async {
                   Navigator.pop(context);
                   final ok = await _confirm(
-                    'Supprimer du serveur',
-                    '« ${rec.name} » sera définitivement supprimé du serveur.',
+                    'Supprimer de ce téléphone',
+                    '« ${rec.name} » sera supprimé uniquement de ce téléphone.',
                   );
                   if (!ok) return;
                   if (_playing?.id == rec.id) _stopPlayer();
                   await sync.deleteFromServer(rec);
-                  _snack('Supprimé du serveur');
+                  _snack('Supprimé de ce téléphone');
                 },
               ),
             if (sync.isConnected)
@@ -245,22 +248,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Icon(Icons.smartphone_outlined,
                       size: 18, color: Color(0xFFD97706)),
                 ),
-                title: const Text('Supprimer de la source'),
+                title: const Text('Supprimer du téléphone source'),
                 subtitle: Text(
                     'Demande au téléphone ${rec.deviceId} de supprimer ce fichier',
                     maxLines: 2),
                 onTap: () async {
                   Navigator.pop(context);
                   final ok = await _confirm(
-                    'Supprimer de la source',
-                    'Une commande sera envoyée à « ${rec.deviceId} » pour supprimer '
-                        'ce fichier du dossier surveillé.',
+                    'Supprimer du téléphone source',
+                    'CallSync ne supprime jamais automatiquement le dossier source.',
                     action: 'Envoyer',
                     destructive: false,
                   );
                   if (!ok) return;
                   await sync.deleteAtSource(rec);
-                  _snack('Commande envoyée à ${rec.deviceId}');
+                  _snack('Aucune suppression distante effectuée');
                 },
               ),
             const SizedBox(height: 8),
@@ -437,32 +439,30 @@ class _HomeScreenState extends State<HomeScreen> {
               final ok = await _confirm(
                   'Vider le stockage local',
                   'Tous les fichiers téléchargés seront supprimés de ce téléphone. '
-                      'Les enregistrements restent sur le serveur.');
+                      'Les fichiers restent sur le téléphone source.');
               if (!ok) return;
               if (_playing != null) _stopPlayer();
               final n = await sync.clearAllLocal();
               _snack('$n fichier(s) supprimé(s) du téléphone');
             } else if (v == 'purge_server') {
               final ok = await _confirm(
-                  'Vider le serveur',
-                  'Tous les enregistrements seront définitivement supprimés du serveur.',
+                  'Vider le stockage pair',
+                  'Le mode pair-à-pair ne stocke aucun fichier sur un serveur. '
+                  'Cette action ne supprime que les fichiers locaux.',
                   action: 'Vider');
               if (!ok) return;
               if (_playing != null) _stopPlayer();
               await sync.purgeServer();
-              _snack('Serveur vidé');
+              _snack('Aucun serveur de stockage à vider');
             } else if (v == 'purge_source') {
               final ok = await _confirm(
-                  'Vider les téléphones sources',
-                  'Une commande sera envoyée à chaque téléphone source pour supprimer '
-                      'tous les fichiers de leur dossier surveillé.\n\n'
-                      'Les fichiers seront supprimés au prochain lancement de '
-                      'l\'application sur chaque appareil.',
+                  'Gérer les fichiers source',
+                  'CallSync ne supprime jamais automatiquement le dossier source.',
                   action: 'Envoyer les commandes',
                   destructive: true);
               if (!ok) return;
               await sync.purgeAllSourceFolders();
-              _snack('Commandes envoyées à tous les appareils sources');
+              _snack('Aucune suppression distante effectuée');
             }
           },
           itemBuilder: (_) => [
@@ -493,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       size: 18,
                       color: Theme.of(context).colorScheme.error),
                   const SizedBox(width: 12),
-                  Text('Vider le serveur',
+                  Text('Vider le stockage pair',
                       style: TextStyle(
                           color: Theme.of(context).colorScheme.error)),
                 ]),
@@ -504,7 +504,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.smartphone_outlined,
                       size: 18, color: Color(0xFFD97706)),
                   SizedBox(width: 12),
-                  Text('Vider les téléphones sources',
+                  Text('Gérer les fichiers source',
                       style: TextStyle(color: Color(0xFFD97706))),
                 ]),
               ),
@@ -541,7 +541,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
-              'Configure ton serveur dans les paramètres\npour voir tes enregistrements.',
+              'Liez un téléphone source dans les paramètres\npour synchroniser ses fichiers.',
               style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant),
               textAlign: TextAlign.center,

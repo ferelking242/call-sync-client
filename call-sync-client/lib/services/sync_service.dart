@@ -1,93 +1,119 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import '../api/callsync_api.dart';
+import '../api/p2p_api.dart';
+import '../models/peer.dart';
 import '../models/recording.dart';
 import 'storage_service.dart';
 
 enum SyncStatus { idle, connecting, syncing, downloading, done, error }
 
 class SyncService extends ChangeNotifier {
-  SyncStatus _status        = SyncStatus.idle;
-  String _statusMessage     = '';
-  List<Recording> _serverRecords   = [];
+  SyncStatus _status = SyncStatus.idle;
+  String _statusMessage = '';
+  List<Recording> _peerRecords = [];
   List<DownloadedRecord> _localRecords = [];
-  double _downloadProgress  = 0.0;
-  int _downloadDone         = 0;
-  int _downloadTotal        = 0;
+  double _downloadProgress = 0;
+  int _downloadDone = 0;
+  int _downloadTotal = 0;
   String? _lastError;
   final Set<int> _downloadingIds = {};
+  P2pApi? _api;
+  PeerProfile? _peer;
+  Timer? _keepAliveTimer;
+  bool _reconnectInFlight = false;
 
-  CallSyncApi? _api;
-
-  SyncStatus get status           => _status;
-  String get statusMessage        => _statusMessage;
-  List<Recording> get records     => _serverRecords;
+  SyncStatus get status => _status;
+  String get statusMessage => _statusMessage;
+  List<Recording> get records => _peerRecords;
   List<DownloadedRecord> get localRecords => _localRecords;
-  double get downloadProgress     => _downloadProgress;
-  int get downloadDone            => _downloadDone;
-  int get downloadTotal           => _downloadTotal;
-  String? get lastError           => _lastError;
-  bool get isConnected            => _api != null && _status != SyncStatus.error;
-  bool get isDownloading          => _status == SyncStatus.downloading;
-  int get missingCount            => _serverRecords.where((r) => !r.isDownloaded).length;
-  int get downloadedCount         => _serverRecords.where((r) => r.isDownloaded).length;
-  Set<int> get downloadingIds     => _downloadingIds;
+  double get downloadProgress => _downloadProgress;
+  int get downloadDone => _downloadDone;
+  int get downloadTotal => _downloadTotal;
+  String? get lastError => _lastError;
+  PeerProfile? get peer => _peer;
+  bool get isConnected => _api != null && _status != SyncStatus.error;
+  bool get isDownloading => _status == SyncStatus.downloading;
+  int get missingCount => _peerRecords.where((r) => !r.isDownloaded).length;
+  int get downloadedCount => _peerRecords.where((r) => r.isDownloaded).length;
+  Set<int> get downloadingIds => _downloadingIds;
+  String? streamUrl(int _) => null;
+  Map<String, String>? get authHeaders => null;
 
-  String? streamUrl(int id) => _api?.streamUrl(id);
-  Map<String, String>? get authHeaders => _api?.authHeaders;
-
-  // ── Connect ────────────────────────────────────────────────────────────────
-
-  Future<bool> connect(String serverUrl, String username, String password) async {
-    _setStatus(SyncStatus.connecting, 'Connexion…');
-    final url = serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    await StorageService.setServerUrl(url);
-    await StorageService.setUsername(username);
-    await StorageService.setPassword(password);
-
-    final token = await CallSyncApi.login(url, username, password);
-    if (token == null) {
-      _setStatus(SyncStatus.error, 'Identifiants incorrects ou serveur inaccessible');
+  Future<bool> connectPeer(PeerProfile profile) async {
+    _setStatus(SyncStatus.connecting, 'Connexion au pair…');
+    _peer = profile;
+    await StorageService.setPeer(profile);
+    _startKeepAlive();
+    try {
+      final api = P2pApi(profile);
+      if (!await api.ping()) throw const SocketException('Pair indisponible');
+      _api = api;
+      _lastError = null;
+      await refreshLocalRecords();
+      await fetchRecords();
+      return true;
+    } catch (error) {
+      _api = null;
+      _lastError = error.toString();
+      _setStatus(SyncStatus.error, 'Pair hors ligne');
       return false;
     }
-    await StorageService.setToken(token);
-    _api = CallSyncApi(baseUrl: url, token: token);
-    _setStatus(SyncStatus.idle, 'Connecté');
-    await refreshLocalRecords();
-    await fetchRecords();
-    return true;
   }
 
   Future<bool> reconnect() async {
-    final url  = await StorageService.getServerUrl();
-    final user = await StorageService.getUsername();
-    final pass = await StorageService.getPassword();
-    if (url.isEmpty) return false;
-    return connect(url, user, pass);
+    if (_reconnectInFlight) return false;
+    final profile = await StorageService.getPeer();
+    if (profile == null) {
+      _setStatus(SyncStatus.idle, 'Aucun pair lié');
+      return false;
+    }
+    _reconnectInFlight = true;
+    try {
+      return await connectPeer(profile);
+    } finally {
+      _reconnectInFlight = false;
+    }
   }
 
-  // ── Fetch ──────────────────────────────────────────────────────────────────
+  void _startKeepAlive() {
+    _keepAliveTimer ??= Timer.periodic(const Duration(minutes: 1), (_) async {
+      final api = _api;
+      if (_peer == null || _reconnectInFlight) return;
+      if (api == null || _status == SyncStatus.error) {
+        await reconnect();
+        return;
+      }
+      try {
+        if (!await api.ping()) throw const SocketException('Pair indisponible');
+        await fetchRecords();
+      } catch (error) {
+        _api = null;
+        _lastError = error.toString();
+        _setStatus(SyncStatus.error, 'Pair hors ligne — reconnexion automatique');
+      }
+    });
+  }
 
   Future<void> fetchRecords() async {
-    if (_api == null) return;
-    _setStatus(SyncStatus.syncing, 'Chargement…');
+    final api = _api;
+    if (api == null) return;
+    _setStatus(SyncStatus.syncing, 'Lecture du manifeste…');
     try {
-      final records = await _api!.getRecords();
+      final records = await api.getManifest();
       await refreshLocalRecords();
-      final localSha = _localRecords.map((r) => r.sha256).toSet();
-      final localById = { for (final r in _localRecords) r.serverId: r };
-      for (final r in records) {
-        final local = localById[r.id] ?? _localRecords.where((lr) => lr.sha256 == r.sha256).firstOrNull;
-        r.isDownloaded = local != null;
-        if (local != null) r.localPath = local.localPath;
+      final byHash = {for (final record in _localRecords) record.sha256: record};
+      for (final record in records) {
+        final local = byHash[record.sha256];
+        record.isDownloaded = local != null && File(local.localPath).existsSync();
+        record.localPath = record.isDownloaded ? local!.localPath : null;
       }
-      _serverRecords = records;
-      _setStatus(SyncStatus.done, '${records.length} enregistrement(s)');
+      _peerRecords = records;
+      _setStatus(SyncStatus.done, '${records.length} fichier(s) du pair');
       unawaited(_autoDownloadMissing());
-    } catch (e) {
-      _setStatus(SyncStatus.error, 'Erreur: $e');
-      _lastError = e.toString();
+    } catch (error) {
+      _lastError = error.toString();
+      _setStatus(SyncStatus.error, 'Manifest inaccessible');
     }
   }
 
@@ -96,173 +122,106 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Download all missing (parallel, cap 4) ────────────────────────────────
-
   Future<void> _autoDownloadMissing() async {
-    if (_api == null) return;
-    final missing = _serverRecords.where((r) => !r.isDownloaded).toList();
+    final missing = _peerRecords.where((record) => !record.isDownloaded).toList();
     if (missing.isEmpty) return;
-    await _downloadList(missing);
-  }
-
-  Future<void> downloadAllMissing() async {
-    if (_api == null) return;
-    final missing = _serverRecords.where((r) => !r.isDownloaded).toList();
-    if (missing.isEmpty) return;
-    await _downloadList(missing);
-  }
-
-  Future<void> _downloadList(List<Recording> list) async {
-    if (_api == null || list.isEmpty) return;
-    _downloadTotal = list.length;
-    _downloadDone  = 0;
-    _downloadProgress = 0.0;
-    _setStatus(SyncStatus.downloading, 'Téléchargement de ${list.length} fichier(s)…');
-
-    const concurrency = 4;
-    for (int i = 0; i < list.length; i += concurrency) {
-      final batch = list.sublist(i, (i + concurrency).clamp(0, list.length));
-      await Future.wait(batch.map(_downloadOne), eagerError: false);
+    _downloadTotal = missing.length;
+    _downloadDone = 0;
+    _downloadProgress = 0;
+    _setStatus(SyncStatus.downloading, 'Synchronisation automatique…');
+    for (final record in missing) {
+      await downloadOne(record);
     }
-
-    await refreshLocalRecords();
-    await fetchRecords();
+    _setStatus(SyncStatus.done, 'Synchronisation terminée');
   }
 
-  /// Download a single recording; safe to call concurrently.
-  Future<bool> downloadOne(Recording rec) async {
-    if (_api == null || rec.isDownloaded || _downloadingIds.contains(rec.id)) {
-      return false;
-    }
-    _downloadingIds.add(rec.id);
+  Future<void> downloadOne(Recording record) async {
+    final api = _api;
+    if (api == null || _downloadingIds.contains(record.id)) return;
+    _downloadingIds.add(record.id);
     notifyListeners();
     try {
-      final path = await StorageService.getLocalPath(rec.name);
-      await _api!.downloadToFile(rec.id, path);
-      rec.isDownloaded = true;
-      rec.localPath = path;
+      final path = await StorageService.getLocalPath(record.name);
+      final part = File('$path.part');
+      final offset = await part.exists() ? await part.length() : 0;
+      await api.downloadToFile(record, path, offset: offset);
+      record.isDownloaded = true;
+      record.localPath = path;
       await StorageService.saveDownloadedRecord(DownloadedRecord(
-        serverId:    rec.id,
-        sha256:      rec.sha256,
-        name:        rec.name,
-        size:        rec.size,
-        localPath:   path,
+        serverId: record.id,
+        sha256: record.sha256,
+        name: record.name,
+        size: record.size,
+        localPath: path,
         downloadedAt: DateTime.now(),
-        deviceId:    rec.deviceId,
+        deviceId: record.deviceId,
       ));
-      return true;
-    } catch (_) {
-      return false;
+    } catch (error) {
+      _lastError = error.toString();
     } finally {
-      _downloadingIds.remove(rec.id);
-      notifyListeners();
-    }
-  }
-
-  Future<void> _downloadOne(Recording rec) async {
-    _downloadingIds.add(rec.id);
-    notifyListeners();
-    try {
-      final path = await StorageService.getLocalPath(rec.name);
-      await _api!.downloadToFile(rec.id, path);
-      rec.isDownloaded = true;
-      rec.localPath = path;
-      await StorageService.saveDownloadedRecord(DownloadedRecord(
-        serverId:    rec.id,
-        sha256:      rec.sha256,
-        name:        rec.name,
-        size:        rec.size,
-        localPath:   path,
-        downloadedAt: DateTime.now(),
-        deviceId:    rec.deviceId,
-      ));
-    } catch (_) {
-      // continue
-    } finally {
-      _downloadingIds.remove(rec.id);
+      _downloadingIds.remove(record.id);
       _downloadDone++;
-      _downloadProgress = _downloadTotal > 0 ? _downloadDone / _downloadTotal : 0;
+      _downloadProgress =
+          _downloadTotal == 0 ? 0 : _downloadDone / _downloadTotal;
+      await refreshLocalRecords();
       notifyListeners();
     }
   }
 
-  // ── Delete local ───────────────────────────────────────────────────────────
-
-  Future<void> deleteLocal(Recording rec) async {
-    if (rec.localPath != null) {
-      try { await File(rec.localPath!).delete(); } catch (_) {}
+  Future<void> deleteLocal(Recording record) async {
+    if (record.localPath != null) {
+      try {
+        await File(record.localPath!).delete();
+      } catch (_) {}
     }
-    await StorageService.removeDownloadedRecord(rec.id);
-    rec.isDownloaded = false;
-    rec.localPath = null;
+    await StorageService.removeDownloadedRecord(record.id);
+    record.isDownloaded = false;
+    record.localPath = null;
     await refreshLocalRecords();
     notifyListeners();
   }
 
-  // ── Delete from server ─────────────────────────────────────────────────────
-
-  Future<void> deleteFromServer(Recording rec) async {
-    if (_api == null) return;
-    await _api!.deleteRecord(rec.id);
-    _serverRecords.removeWhere((r) => r.id == rec.id);
-    await deleteLocal(rec);
-  }
-
-  // ── Purge all server ───────────────────────────────────────────────────────
+  Future<void> deleteFromServer(Recording record) => deleteLocal(record);
 
   Future<Map<String, dynamic>?> purgeServer() async {
-    if (_api == null) return null;
-    final result = await _api!.purgeAll();
-    _serverRecords.clear();
-    notifyListeners();
-    return result;
+    // There is deliberately no central storage to purge in P2P mode.
+    return {'deleted': 0, 'message': 'Aucun serveur de stockage'};
   }
-
-  // ── Clear all local ───────────────────────────────────────────────────────
 
   Future<int> clearAllLocal() async {
     final count = await StorageService.deleteAllLocalFilesAndRegistry();
-    for (final r in _serverRecords) {
-      r.isDownloaded = false;
-      r.localPath = null;
+    for (final record in _peerRecords) {
+      record.isDownloaded = false;
+      record.localPath = null;
     }
     await refreshLocalRecords();
     notifyListeners();
     return count;
   }
 
-  // ── Delete at source (single) ─────────────────────────────────────────────
+  Future<void> deleteAtSource(Recording _) async {}
+  Future<void> purgeAllSourceFolders() async {}
 
-  Future<void> deleteAtSource(Recording rec) async {
-    if (_api == null) return;
-    await _api!.requestDeleteAtSource(rec.deviceId, [rec.sha256]);
+  Future<void> unpair() async {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
+    _api = null;
+    _peer = null;
+    await StorageService.clearPeer();
+    _peerRecords = [];
+    _setStatus(SyncStatus.idle, 'Aucun pair lié');
   }
 
-  // ── Purge all source folders ──────────────────────────────────────────────
-  // Sends delete-at-source commands for every recording, grouped by device.
-  // The Kotlin recorder polls GET /delete-commands/{device_id} and deletes
-  // the matching files from the monitored folder on its side.
-
-  Future<void> purgeAllSourceFolders() async {
-    if (_api == null) return;
-    final byDevice = <String, List<String>>{};
-    for (final r in _serverRecords) {
-      byDevice.putIfAbsent(r.deviceId, () => []).add(r.sha256);
-    }
-    for (final entry in byDevice.entries) {
-      await _api!.requestDeleteAtSource(entry.key, entry.value);
-    }
+  @override
+  void dispose() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
+    super.dispose();
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  void _setStatus(SyncStatus s, String msg) {
-    _status = s;
-    _statusMessage = msg;
+  void _setStatus(SyncStatus status, String message) {
+    _status = status;
+    _statusMessage = message;
     notifyListeners();
   }
-}
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }

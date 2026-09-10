@@ -2,11 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'services/sync_service.dart';
-import 'services/storage_service.dart';
 import 'services/update_service.dart';
+import 'package:workmanager/workmanager.dart';
 
-void main() {
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    WidgetsFlutterBinding.ensureInitialized();
+    final sync = SyncService();
+    return await sync.reconnect();
+  });
+}
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Workmanager().initialize(callbackDispatcher);
+  await Workmanager().registerPeriodicTask(
+    'callsync-peer-sync',
+    'peer-sync',
+    frequency: const Duration(minutes: 15),
+    constraints: Constraints(networkType: NetworkType.connected),
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+  );
   runApp(
     MultiProvider(
       providers: [
@@ -33,28 +50,8 @@ class _CallSyncAppState extends State<CallSyncApp> {
     });
   }
 
-  /// On first launch (no server URL saved), auto-fetch config from GitHub.
-  /// Then reconnect if credentials are available.
   Future<void> _bootstrap() async {
-    final url = await StorageService.getServerUrl();
-
-    if (url.isEmpty) {
-      // First launch — pull remote config
-      final config = await StorageService.fetchRemoteConfig();
-      if (config != null && config['url']!.isNotEmpty) {
-        await StorageService.setServerUrl(config['url']!);
-        await StorageService.setUsername(config['username'] ?? 'admin');
-        // Only pre-fill password if none saved
-        final saved = await StorageService.getPassword();
-        if (saved.isEmpty) {
-          await StorageService.setPassword(config['password'] ?? 'admin123');
-        }
-      }
-    }
-
-    // Auto-reconnect with saved credentials
-    final savedUrl = await StorageService.getServerUrl();
-    if (savedUrl.isNotEmpty && mounted) {
+    if (mounted) {
       context.read<SyncService>().reconnect();
     }
   }
