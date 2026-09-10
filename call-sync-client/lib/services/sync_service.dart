@@ -135,6 +135,8 @@ class SyncService extends ChangeNotifier {
     _setStatus(SyncStatus.done, 'Synchronisation terminée');
   }
 
+  Future<void> downloadAllMissing() => _autoDownloadMissing();
+
   Future<void> downloadOne(Recording record) async {
     final api = _api;
     if (api == null || _downloadingIds.contains(record.id)) return;

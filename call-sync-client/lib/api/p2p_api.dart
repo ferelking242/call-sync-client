@@ -82,7 +82,7 @@ class P2pApi {
       // The source sends the full-file hash even when only the tail is sent.
       // Hash the complete resumed part, not only the newly received bytes.
       final actual = await sha256.bind(File(tempPath).openRead()).first;
-      if (hex.encode(actual.bytes) != expectedHash) {
+      if (actual.toString() != expectedHash) {
         await output.delete();
         throw Exception('SHA-256 invalide pour ${record.name}');
       }
