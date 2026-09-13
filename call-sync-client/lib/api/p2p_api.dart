@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' as http;
 import '../models/peer.dart';
 import '../models/recording.dart';
 
@@ -12,6 +13,20 @@ class P2pApi {
   P2pApi(this.peer);
 
   Future<List<Recording>> getManifest() async {
+    try {
+      return await _getManifestDirect();
+    } catch (directError) {
+      if (peer.relay == null) rethrow;
+      try {
+        return await _getManifestRelay();
+      } catch (relayError) {
+        throw Exception(
+            'Connexion P2P directe et relais Internet indisponibles: $relayError');
+      }
+    }
+  }
+
+  Future<List<Recording>> _getManifestDirect() async {
     final socket = await _open();
     try {
       final reader = _SocketReader(socket);
@@ -20,8 +35,22 @@ class P2pApi {
       if (response['type'] != 'manifest') {
         throw Exception(response['error'] ?? 'Manifest pair invalide');
       }
-      final files = (response['files'] as List<dynamic>? ?? const []);
-      return files.asMap().entries.map((entry) {
+      return _recordsFromFiles(response['files'] as List<dynamic>? ?? const []);
+    } finally {
+      await socket.close();
+    }
+  }
+
+  Future<List<Recording>> _getManifestRelay() async {
+    final response = await _relayRequest({'type': 'manifest'});
+    if (response['type'] != 'manifest') {
+      throw Exception(response['error'] ?? 'Manifest relais invalide');
+    }
+    return _recordsFromFiles(response['files'] as List<dynamic>? ?? const []);
+  }
+
+  List<Recording> _recordsFromFiles(List<dynamic> files) {
+    return files.asMap().entries.map((entry) {
         final file = entry.value as Map<String, dynamic>;
         return Recording(
           id: _stableId(file['path'] as String? ?? '${entry.key}'),
@@ -35,12 +64,24 @@ class P2pApi {
           deviceId: peer.id,
         );
       }).toList();
-    } finally {
-      await socket.close();
-    }
   }
 
   Future<void> downloadToFile(Recording record, String savePath,
+      {int offset = 0}) async {
+    try {
+      await _downloadDirect(record, savePath, offset: offset);
+    } catch (directError) {
+      if (peer.relay == null) rethrow;
+      try {
+        await _downloadRelay(record, savePath);
+      } catch (relayError) {
+        throw Exception(
+            'Téléchargement direct et relais Internet indisponibles: $relayError');
+      }
+    }
+  }
+
+  Future<void> _downloadDirect(Recording record, String savePath,
       {int offset = 0}) async {
     final socket = await _open();
     final tempPath = '$savePath.part';
@@ -93,15 +134,95 @@ class P2pApi {
   }
 
   Future<bool> ping() async {
-    final socket = await _open();
     try {
-      final reader = _SocketReader(socket);
-      await _send(socket, {'type': 'ping'});
-      final response = await reader.jsonLine();
+      final socket = await _open();
+      try {
+        final reader = _SocketReader(socket);
+        await _send(socket, {'type': 'ping'});
+        final response = await reader.jsonLine();
+        return response['type'] == 'pong';
+      } finally {
+        await socket.close();
+      }
+    } catch (_) {
+      if (peer.relay == null) rethrow;
+      final response = await _relayRequest({'type': 'ping'});
       return response['type'] == 'pong';
-    } finally {
-      await socket.close();
     }
+  }
+
+  Future<void> _downloadRelay(Recording record, String savePath) async {
+    final tempPath = '$savePath.part';
+    final output = File(tempPath);
+    var offset = await output.exists() ? await output.length() : 0;
+    if (offset == 0) {
+      await output.writeAsBytes(const []);
+    }
+
+    String expectedHash = record.sha256;
+    while (offset < record.size) {
+      final response = await _relayRequest({
+        'type': 'download',
+        'path': record.path,
+        'offset': offset,
+        'maxBytes': 256 * 1024,
+      });
+      if (response['type'] != 'file') {
+        throw Exception(response['error'] ?? 'Transfert relais refusé');
+      }
+      final totalSize = (response['totalSize'] as num?)?.toInt() ?? 0;
+      if (totalSize != record.size) {
+        throw Exception('Taille du fichier pair invalide pour ${record.name}');
+      }
+      expectedHash = response['sha256'] as String? ?? expectedHash;
+      final data = base64.decode(response['data'] as String? ?? '');
+      if (data.isEmpty) throw const SocketException('Transfert relais interrompu');
+      if (offset + data.length > record.size) {
+        throw Exception('Données relais trop longues pour ${record.name}');
+      }
+      final sink = output.openWrite(mode: FileMode.append);
+      sink.add(data);
+      await sink.close();
+      offset += data.length;
+    }
+
+    final actual = await sha256.bind(output.openRead()).first;
+    if (actual.toString() != expectedHash) {
+      await output.delete();
+      throw Exception('SHA-256 invalide pour ${record.name}');
+    }
+    await output.rename(savePath);
+  }
+
+  Future<Map<String, dynamic>> _relayRequest(
+      Map<String, dynamic> request) async {
+    final relay = peer.relay;
+    if (relay == null || relay.isEmpty) {
+      throw const SocketException('Relais P2P non configuré');
+    }
+    final response = await http
+        .post(
+          Uri.parse('${relay.replaceFirst(RegExp(r'/$'), '')}/p2p/client/request'),
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'source_id': peer.id,
+            'secret': peer.secret,
+            'request': request,
+          }),
+        )
+        .timeout(const Duration(seconds: 130));
+    final body = jsonDecode(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(body is Map ? body['error'] ?? 'Relais indisponible' : 'Relais indisponible');
+    }
+    if (body is! Map<String, dynamic>) {
+      throw Exception('Réponse relais invalide');
+    }
+    final result = body['response'];
+    if (result is! Map<String, dynamic>) {
+      throw Exception('Réponse P2P absente');
+    }
+    return result;
   }
 
   Future<Socket> _open() async {

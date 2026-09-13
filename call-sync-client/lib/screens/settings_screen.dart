@@ -13,9 +13,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _codeCtrl = TextEditingController();
   bool _saving = false;
-  bool _testing = false;
-  String? _testResult;
-  bool _testOk = false;
 
   @override
   void initState() {
@@ -36,30 +33,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   PeerProfile? _profile() => PeerProfile.decode(_codeCtrl.text);
-
-  Future<void> _testConnection() async {
-    final profile = _profile();
-    if (profile == null) {
-      setState(() {
-        _testOk = false;
-        _testResult = 'Code de liaison invalide.';
-      });
-      return;
-    }
-    setState(() {
-      _testing = true;
-      _testResult = null;
-    });
-    final ok = await context.read<SyncService>().connectPeer(profile);
-    if (mounted) {
-      setState(() {
-        _testing = false;
-        _testOk = ok;
-        _testResult =
-            ok ? '✓ Pair accessible — liaison mémorisée' : '✗ Pair hors ligne';
-      });
-    }
-  }
 
   Future<void> _save() async {
     final profile = _profile();
@@ -130,45 +103,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _testing ? null : _testConnection,
-                  icon: _testing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.network_check),
-                  label: const Text('Tester'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: FilledButton(
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Text('Lier & synchroniser'),
-                ),
-              ),
-            ],
-          ),
-          if (_testResult != null) ...[
-            const SizedBox(height: 12),
-            Text(_testResult!,
-                style: TextStyle(
-                    color: _testOk
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.error,
-                    fontWeight: FontWeight.w600)),
-          ],
+           SizedBox(
+             width: double.infinity,
+             child: FilledButton.icon(
+               onPressed: _saving ? null : _save,
+               icon: _saving
+                   ? const SizedBox(
+                       width: 18,
+                       height: 18,
+                       child: CircularProgressIndicator(
+                           strokeWidth: 2, color: Colors.white))
+                   : const Icon(Icons.sync_rounded),
+               label: Text(_saving ? 'Connexion au pair…' : 'Lier & synchroniser'),
+             ),
+           ),
           const SizedBox(height: 32),
           _SectionLabel('Stockage local'),
           const SizedBox(height: 12),

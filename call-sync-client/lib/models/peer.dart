@@ -7,6 +7,7 @@ class PeerProfile {
   final int port;
   final String secret;
   final List<String> candidates;
+  final String? relay;
 
   const PeerProfile({
     required this.id,
@@ -15,6 +16,7 @@ class PeerProfile {
     required this.port,
     required this.secret,
     this.candidates = const [],
+    this.relay,
   });
 
   List<String> get hosts {
@@ -35,6 +37,9 @@ class PeerProfile {
         candidates: (json['candidates'] as List<dynamic>? ?? const [])
             .whereType<String>()
             .toList(),
+        relay: (json['relay'] as String?)?.trim().isEmpty == true
+            ? null
+            : json['relay'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -44,6 +49,7 @@ class PeerProfile {
         'port': port,
         'secret': secret,
         'candidates': candidates,
+        if (relay != null && relay!.isNotEmpty) 'relay': relay,
       };
 
   String encode() => base64Url.encode(utf8.encode(jsonEncode(toJson())));

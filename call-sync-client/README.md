@@ -9,7 +9,8 @@ Client Flutter pair-à-pair pour recevoir les enregistrements CallSync.
 - Téléchargement uniquement des nouveautés ou fichiers modifiés.
 - Reprise d’un fichier interrompu via un fichier temporaire.
 - Lecture audio locale après synchronisation.
-- Aucun fichier stocké sur un serveur central.
+- Aucun fichier stocké sur un serveur central. Le relais Internet éventuel ne
+  fait que transmettre les commandes et les blocs audio en mémoire.
 
 ## Flux pair-à-pair
 
@@ -33,7 +34,7 @@ Client Flutter pair-à-pair pour recevoir les enregistrements CallSync.
 4. Collez le code et appuyez sur **Lier & synchroniser**.
 5. Le client réessaie périodiquement lorsque le réseau est disponible.
 
-Le protocole direct fonctionne lorsque l’adresse annoncée par le code est joignable
-(réseau local, IP publique routable ou port redirigé). Deux téléphones derrière
-des CGNAT différents ont besoin d’un rendez-vous ICE/WebRTC ou d’un relais
-optionnel : ce composant ne doit pas stocker les fichiers.
+Le client tente le protocole direct lorsque l’adresse annoncée est joignable.
+Si ce n’est pas le cas, il utilise automatiquement le relais Internet indiqué
+dans le code. Les deux téléphones peuvent être sur des réseaux différents ; le
+relais ne stocke pas les fichiers.
