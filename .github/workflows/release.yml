@@ -3,8 +3,6 @@ name: Build & Release Flutter APK
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'call-sync-client/pubspec.yaml'
   workflow_dispatch:
 
 jobs:
@@ -17,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
       - name: Set up Flutter 3.38.x
         uses: subosito/flutter-action@v2
         with:
@@ -27,7 +31,6 @@ jobs:
       # ── Version ───────────────────────────────────────────────────────────
       - name: Extract version
         id: version
-        working-directory: call-sync-client
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -36,21 +39,19 @@ jobs:
 
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Install dependencies
-        working-directory: call-sync-client
         run: flutter pub get
 
       - name: Build release APK
-        working-directory: call-sync-client
         run: flutter build apk --release --no-tree-shake-icons --verbose
 
       # ── Locate APK ────────────────────────────────────────────────────────
       - name: Locate APK
         id: apk
         run: |
-          APK="call-sync-client/build/app/outputs/flutter-apk/app-release.apk"
+          APK="build/app/outputs/flutter-apk/app-release.apk"
           if [ ! -f "$APK" ]; then
             echo "ERROR: APK not found at $APK"
-            find call-sync-client/build -name "*.apk" 2>/dev/null | head -5
+            find build -name "*.apk" 2>/dev/null | head -5
             exit 1
           fi
           echo "Found: $APK  ($(du -sh "$APK" | cut -f1))"
