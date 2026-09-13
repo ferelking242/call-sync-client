@@ -40,7 +40,10 @@ android {
 
     buildTypes {
         release {
-            if (hasKeystore) { signingConfig signingConfigs.release }
+            // A direct-installable release APK must always be signed. Use the
+            // private release keystore when CI provides one; otherwise use the
+            // Gradle debug certificate for the simple test build.
+            signingConfig hasKeystore ? signingConfigs.release : signingConfigs.debug
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"

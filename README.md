@@ -26,6 +26,13 @@ Client Flutter pair-à-pair pour recevoir les enregistrements CallSync.
       -> stocke localement
 ```
 
+## Signature de l’APK
+
+Le workflow GitHub produit une APK release installable directement. Il utilise
+un keystore privé si les variables de CI sont disponibles ; sinon, pour le test,
+il utilise le certificat debug Gradle afin d’éviter l’erreur Android « certificat
+manquant ». Cette signature de test ne convient pas à une publication Play Store.
+
 ## Configuration
 
 1. Ouvrez CallSync sur le téléphone source.
