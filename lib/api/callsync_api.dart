@@ -37,7 +37,19 @@ class CallSyncApi {
     if (r.statusCode != 200) {
       throw HttpException('Serveur HTTP ${r.statusCode}');
     }
-    final body = jsonDecode(r.body);
+    final responseText = _responseText(r);
+    dynamic body;
+    try {
+      body = jsonDecode(responseText);
+    } on FormatException {
+      // Some older CallSync server builds returned the plain text "healthy".
+      // Accept it so an otherwise reachable server does not look offline.
+      if (responseText.toLowerCase() == 'healthy') {
+        return const {'status': 'healthy'};
+      }
+      throw HttpException(
+          'Réponse /health non JSON (HTTP ${r.statusCode})');
+    }
     if (body is! Map<String, dynamic> || body['status'] != 'healthy') {
       throw const HttpException('Réponse de santé du serveur invalide');
     }
@@ -63,7 +75,14 @@ class CallSyncApi {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'username': username, 'password': password}),
     ).timeout(const Duration(seconds: 15));
-    final body = jsonDecode(r.body);
+    final responseText = _responseText(r);
+    dynamic body;
+    try {
+      body = jsonDecode(responseText);
+    } on FormatException {
+      throw HttpException(
+          'Réponse de connexion non JSON (HTTP ${r.statusCode})');
+    }
     if (r.statusCode != 200) {
       final message = body is Map<String, dynamic> ? body['error'] : null;
       throw HttpException(
@@ -73,6 +92,10 @@ class CallSyncApi {
       throw const HttpException('Réponse de connexion invalide');
     }
     return body['token'] as String;
+  }
+
+  static String _responseText(http.Response response) {
+    return utf8.decode(response.bodyBytes).replaceFirst('\uFEFF', '').trim();
   }
 
   // ── Records ───────────────────────────────────────────────────────────────
