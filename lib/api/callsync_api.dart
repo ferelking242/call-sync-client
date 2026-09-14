@@ -37,23 +37,16 @@ class CallSyncApi {
     if (r.statusCode != 200) {
       throw HttpException('Serveur HTTP ${r.statusCode}');
     }
-    final responseText = _responseText(r);
-    dynamic body;
+    // A reachable health endpoint is enough to continue. Older server/proxy
+    // responses may be HTTP 200 without a JSON body; rejecting those here
+    // breaks connections that worked before health-response validation.
     try {
-      body = jsonDecode(responseText);
+      final body = jsonDecode(_responseText(r));
+      if (body is Map<String, dynamic>) return body;
     } on FormatException {
-      // Some older CallSync server builds returned the plain text "healthy".
-      // Accept it so an otherwise reachable server does not look offline.
-      if (responseText.toLowerCase() == 'healthy') {
-        return const {'status': 'healthy'};
-      }
-      throw HttpException(
-          'Réponse /health non JSON (HTTP ${r.statusCode})');
+      // Ignore non-JSON HTTP 200 health bodies for compatibility.
     }
-    if (body is! Map<String, dynamic> || body['status'] != 'healthy') {
-      throw const HttpException('Réponse de santé du serveur invalide');
-    }
-    return body;
+    return const {'status': 'healthy'};
   }
 
   Future<bool> checkHealth() async {
