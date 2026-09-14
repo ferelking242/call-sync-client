@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../api/callsync_api.dart';
 import '../api/p2p_api.dart';
 import '../models/peer.dart';
 import '../models/recording.dart';
@@ -19,6 +20,7 @@ class SyncService extends ChangeNotifier {
   String? _lastError;
   final Set<int> _downloadingIds = {};
   P2pApi? _api;
+  CallSyncApi? _serverApi;
   PeerProfile? _peer;
   Timer? _keepAliveTimer;
   bool _reconnectInFlight = false;
@@ -32,13 +34,56 @@ class SyncService extends ChangeNotifier {
   int get downloadTotal => _downloadTotal;
   String? get lastError => _lastError;
   PeerProfile? get peer => _peer;
-  bool get isConnected => _api != null && _status != SyncStatus.error;
+  bool get isConnected =>
+      (_api != null || _serverApi != null) && _status != SyncStatus.error;
+  bool get usingServer => _serverApi != null;
+  String? get serverUrl => _serverApi?.baseUrl;
   bool get isDownloading => _status == SyncStatus.downloading;
   int get missingCount => _peerRecords.where((r) => !r.isDownloaded).length;
   int get downloadedCount => _peerRecords.where((r) => r.isDownloaded).length;
   Set<int> get downloadingIds => _downloadingIds;
   String? streamUrl(int _) => null;
   Map<String, String>? get authHeaders => null;
+
+  Future<bool> connectServer({
+    required String url,
+    required String username,
+    required String password,
+  }) async {
+    _setStatus(SyncStatus.connecting, 'Connexion au serveur…');
+    final cleanUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
+    if (cleanUrl.isEmpty || username.trim().isEmpty || password.isEmpty) {
+      _lastError = 'URL, nom d’utilisateur et mot de passe sont obligatoires';
+      _setStatus(SyncStatus.error, 'Configuration serveur incomplète');
+      return false;
+    }
+
+    try {
+      final token = await CallSyncApi.login(cleanUrl, username.trim(), password);
+      if (token == null || token.isEmpty) {
+        throw const HttpException('Identifiants refusés par le serveur');
+      }
+      _serverApi = CallSyncApi(baseUrl: cleanUrl, token: token);
+      _api = null;
+      _peer = null;
+      await StorageService.setServerConfig(
+        url: cleanUrl,
+        username: username,
+        password: password,
+      );
+      _lastError = null;
+      await fetchRecords();
+      if (_status == SyncStatus.error) {
+        throw HttpException(_lastError ?? 'Lecture du serveur impossible');
+      }
+      return true;
+    } catch (error) {
+      _serverApi = null;
+      _lastError = error.toString();
+      _setStatus(SyncStatus.error, 'Serveur inaccessible');
+      return false;
+    }
+  }
 
   Future<bool> connectPeer(PeerProfile profile) async {
     _setStatus(SyncStatus.connecting, 'Connexion au pair…');
@@ -49,6 +94,7 @@ class SyncService extends ChangeNotifier {
       final api = P2pApi(profile);
       if (!await api.ping()) throw const SocketException('Pair indisponible');
       _api = api;
+      _serverApi = null;
       _lastError = null;
       await refreshLocalRecords();
       await fetchRecords();
@@ -63,14 +109,22 @@ class SyncService extends ChangeNotifier {
 
   Future<bool> reconnect() async {
     if (_reconnectInFlight) return false;
-    final profile = await StorageService.getPeer();
-    if (profile == null) {
-      _setStatus(SyncStatus.idle, 'Aucun pair lié');
-      return false;
-    }
     _reconnectInFlight = true;
     try {
-      return await connectPeer(profile);
+      final url = await StorageService.getServerUrl();
+      final username = await StorageService.getServerUsername();
+      final password = await StorageService.getServerPassword();
+      final serverOk = await connectServer(
+        url: url,
+        username: username,
+        password: password,
+      );
+      if (serverOk) return true;
+
+      // Keep the old P2P pairing as a real fallback, not the only mode.
+      final profile = await StorageService.getPeer();
+      if (profile != null) return await connectPeer(profile);
+      return false;
     } finally {
       _reconnectInFlight = false;
     }
@@ -79,7 +133,16 @@ class SyncService extends ChangeNotifier {
   void _startKeepAlive() {
     _keepAliveTimer ??= Timer.periodic(const Duration(minutes: 1), (_) async {
       final api = _api;
-      if (_peer == null || _reconnectInFlight) return;
+      if (_reconnectInFlight) return;
+      if (_serverApi != null) {
+        try {
+          await fetchRecords();
+        } catch (_) {
+          await reconnect();
+        }
+        return;
+      }
+      if (_peer == null) return;
       if (api == null || _status == SyncStatus.error) {
         await reconnect();
         return;
@@ -96,11 +159,14 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> fetchRecords() async {
-    final api = _api;
-    if (api == null) return;
+    final serverApi = _serverApi;
+    final peerApi = _api;
+    if (serverApi == null && peerApi == null) return;
     _setStatus(SyncStatus.syncing, 'Lecture du manifeste…');
     try {
-      final records = await api.getManifest();
+      final records = serverApi != null
+          ? await serverApi.getRecords()
+          : await peerApi!.getManifest();
       await refreshLocalRecords();
       final byHash = {for (final record in _localRecords) record.sha256: record};
       for (final record in records) {
@@ -138,15 +204,25 @@ class SyncService extends ChangeNotifier {
   Future<void> downloadAllMissing() => _autoDownloadMissing();
 
   Future<void> downloadOne(Recording record) async {
-    final api = _api;
-    if (api == null || _downloadingIds.contains(record.id)) return;
+    final serverApi = _serverApi;
+    final peerApi = _api;
+    if (serverApi == null && peerApi == null ||
+        _downloadingIds.contains(record.id)) return;
     _downloadingIds.add(record.id);
     notifyListeners();
     try {
       final path = await StorageService.getLocalPath(record.name);
       final part = File('$path.part');
       final offset = await part.exists() ? await part.length() : 0;
-      await api.downloadToFile(record, path, offset: offset);
+      if (serverApi != null) {
+        await serverApi.downloadToFile(record.id, part.path, offset: offset);
+      } else {
+        await peerApi!.downloadToFile(record, part.path, offset: offset);
+      }
+      if (await part.exists()) {
+        if (await File(path).exists()) await File(path).delete();
+        await part.rename(path);
+      }
       record.isDownloaded = true;
       record.localPath = path;
       await StorageService.saveDownloadedRecord(DownloadedRecord(
@@ -183,10 +259,25 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> deleteFromServer(Recording record) => deleteLocal(record);
+  Future<void> deleteFromServer(Recording record) async {
+    if (_serverApi != null) {
+      await _serverApi!.deleteRecord(record.id);
+      await deleteLocal(record);
+      _peerRecords.removeWhere((item) => item.id == record.id);
+      notifyListeners();
+    } else {
+      await deleteLocal(record);
+    }
+  }
 
   Future<Map<String, dynamic>?> purgeServer() async {
-    // There is deliberately no central storage to purge in P2P mode.
+    if (_serverApi != null) {
+      final result = await _serverApi!.purgeAll();
+      await clearAllLocal();
+      _peerRecords = [];
+      notifyListeners();
+      return result;
+    }
     return {'deleted': 0, 'message': 'Aucun serveur de stockage'};
   }
 
@@ -201,7 +292,11 @@ class SyncService extends ChangeNotifier {
     return count;
   }
 
-  Future<void> deleteAtSource(Recording _) async {}
+  Future<void> deleteAtSource(Recording record) async {
+    if (_serverApi != null) {
+      await _serverApi!.requestDeleteAtSource(record.deviceId, [record.sha256]);
+    }
+  }
   Future<void> purgeAllSourceFolders() async {}
 
   Future<void> unpair() async {
@@ -212,6 +307,13 @@ class SyncService extends ChangeNotifier {
     await StorageService.clearPeer();
     _peerRecords = [];
     _setStatus(SyncStatus.idle, 'Aucun pair lié');
+  }
+
+  Future<void> disconnectServer() async {
+    _serverApi = null;
+    _peerRecords = [];
+    await StorageService.clearServerConfig();
+    _setStatus(SyncStatus.idle, 'Aucun serveur configuré');
   }
 
   @override

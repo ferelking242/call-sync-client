@@ -11,8 +11,12 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final _urlCtrl = TextEditingController();
+  final _usernameCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   bool _saving = false;
+  bool _showPassword = false;
 
   @override
   void initState() {
@@ -22,19 +26,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final peer = await StorageService.getPeer();
+    _urlCtrl.text = await StorageService.getServerUrl();
+    _usernameCtrl.text = await StorageService.getServerUsername();
+    _passwordCtrl.text = await StorageService.getServerPassword();
     if (peer != null) _codeCtrl.text = peer.encode();
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _urlCtrl.dispose();
+    _usernameCtrl.dispose();
+    _passwordCtrl.dispose();
     _codeCtrl.dispose();
     super.dispose();
   }
 
   PeerProfile? _profile() => PeerProfile.decode(_codeCtrl.text);
 
-  Future<void> _save() async {
+  Future<void> _savePeer() async {
     final profile = _profile();
     if (profile == null) {
       _showSnack('Collez un code de liaison valide.', isError: true);
@@ -46,6 +56,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _saving = false);
       _showSnack(ok ? '✓ Pair lié avec succès' : 'Pair inaccessible',
           isError: !ok);
+      if (ok) Navigator.pop(context);
+    }
+  }
+
+  Future<void> _saveServer() async {
+    setState(() => _saving = true);
+    final ok = await context.read<SyncService>().connectServer(
+          url: _urlCtrl.text,
+          username: _usernameCtrl.text,
+          password: _passwordCtrl.text,
+        );
+    if (mounted) {
+      setState(() => _saving = false);
+      _showSnack(
+        ok ? '✓ Serveur connecté et fichiers synchronisés' : 'Serveur inaccessible',
+        isError: !ok,
+      );
       if (ok) Navigator.pop(context);
     }
   }
@@ -75,6 +102,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          _SectionLabel('Serveur CallSync'),
+          const SizedBox(height: 12),
+          Text(
+            'Connectez-vous au serveur pour recevoir les enregistrements '
+            'depuis Internet ou votre réseau local.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _urlCtrl,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Adresse du serveur',
+              hintText: 'https://exemple.replit.app',
+              prefixIcon: Icon(Icons.cloud_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _usernameCtrl,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Nom d’utilisateur',
+              prefixIcon: Icon(Icons.person_outline),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passwordCtrl,
+            obscureText: !_showPassword,
+            decoration: InputDecoration(
+              labelText: 'Mot de passe',
+              prefixIcon: const Icon(Icons.lock_outline),
+              suffixIcon: IconButton(
+                tooltip: _showPassword ? 'Masquer' : 'Afficher',
+                icon: Icon(_showPassword
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined),
+                onPressed: () =>
+                    setState(() => _showPassword = !_showPassword),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _saving ? null : _saveServer,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.cloud_sync_outlined),
+              label: Text(_saving ? 'Connexion au serveur…' : 'Tester et synchroniser'),
+            ),
+          ),
+          const SizedBox(height: 32),
           _SectionLabel('Liaison pair-à-pair'),
           const SizedBox(height: 12),
           Text(
@@ -106,7 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
            SizedBox(
              width: double.infinity,
              child: FilledButton.icon(
-               onPressed: _saving ? null : _save,
+               onPressed: _saving ? null : _savePeer,
                icon: _saving
                    ? const SizedBox(
                        width: 18,

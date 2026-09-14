@@ -8,6 +8,47 @@ import '../models/recording.dart';
 class StorageService {
   static const _keyPeer = 'paired_peer_v1';
   static const _keyDownloaded = 'downloaded_records_v2';
+  static const _keyServerUrl = 'server_url_v1';
+  static const _keyServerUsername = 'server_username_v1';
+  static const _keyServerPassword = 'server_password_v1';
+
+  static const defaultServerUrl =
+      'https://vapid-pleasing-drawings--koyih59365.replit.app';
+  static const defaultServerUsername = 'admin';
+  static const defaultServerPassword = 'admin123';
+
+  static Future<String> getServerUrl() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyServerUrl) ?? defaultServerUrl;
+  }
+
+  static Future<String> getServerUsername() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyServerUsername) ?? defaultServerUsername;
+  }
+
+  static Future<String> getServerPassword() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyServerPassword) ?? defaultServerPassword;
+  }
+
+  static Future<void> setServerConfig({
+    required String url,
+    required String username,
+    required String password,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyServerUrl, url.trim());
+    await p.setString(_keyServerUsername, username.trim());
+    await p.setString(_keyServerPassword, password);
+  }
+
+  static Future<void> clearServerConfig() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove(_keyServerUrl);
+    await p.remove(_keyServerUsername);
+    await p.remove(_keyServerPassword);
+  }
 
   static Future<PeerProfile?> getPeer() async {
     final p = await SharedPreferences.getInstance();

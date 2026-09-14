@@ -62,11 +62,20 @@ class CallSyncApi {
   // ── Download ──────────────────────────────────────────────────────────────
 
   // Uses /download/{id} (not /stream): triggers server-side auto-delete after serving.
-  Future<void> downloadToFile(int recordId, String savePath) async {
-    final r = await http.get(Uri.parse('$baseUrl/download/$recordId'), headers: _headers)
+  Future<void> downloadToFile(int recordId, String savePath, {int offset = 0}) async {
+    final headers = <String, String>{..._headers};
+    if (offset > 0) headers['Range'] = 'bytes=$offset-';
+    final r = await http.get(Uri.parse('$baseUrl/download/$recordId'), headers: headers)
         .timeout(const Duration(minutes: 5));
-    if (r.statusCode != 200) throw Exception('HTTP ${r.statusCode}');
-    await File(savePath).writeAsBytes(r.bodyBytes);
+    if (r.statusCode != 200 && r.statusCode != 206) {
+      throw Exception('HTTP ${r.statusCode}');
+    }
+    final file = File(savePath);
+    if (r.statusCode == 206 && offset > 0) {
+      await file.writeAsBytes(r.bodyBytes, mode: FileMode.append);
+    } else {
+      await file.writeAsBytes(r.bodyBytes);
+    }
   }
 
   // ── Delete single record (server-side) ───────────────────────────────────

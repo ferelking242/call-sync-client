@@ -42,29 +42,37 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release --no-tree-shake-icons --verbose
+        run: |
+          flutter build apk --release \
+            --split-per-abi \
+            --tree-shake-icons \
+            --obfuscate \
+            --split-debug-info=build/debug-info
 
       # ── Locate APK ────────────────────────────────────────────────────────
       - name: Locate APK
         id: apk
         run: |
-          APK="build/app/outputs/flutter-apk/app-release.apk"
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK not found at $APK"
+          APK_DIR="build/app/outputs/flutter-apk"
+          APK_COUNT=$(find "$APK_DIR" -maxdepth 1 -name '*-release.apk' | wc -l)
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "ERROR: No split release APK found in $APK_DIR"
             find build -name "*.apk" 2>/dev/null | head -5
             exit 1
           fi
-          echo "Found: $APK  ($(du -sh "$APK" | cut -f1))"
-          DEST="callsync-client-${{ steps.version.outputs.version }}.apk"
-          cp "$APK" "$DEST"
-          echo "dest=$DEST" >> "$GITHUB_OUTPUT"
+          mkdir -p release
+          for APK in "$APK_DIR"/*-release.apk; do
+            ABI=$(basename "$APK" | sed 's/^app-//; s/-release\.apk$//')
+            DEST="release/callsync-client-${{ steps.version.outputs.version }}-${ABI}.apk"
+            cp "$APK" "$DEST"
+            echo "Found: $DEST  ($(du -sh "$APK" | cut -f1))"
 
       # ── Upload as workflow artifact ───────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: callsync-client-${{ steps.version.outputs.version }}
-          path: ${{ steps.apk.outputs.dest }}
+          path: release/*.apk
           retention-days: 30
 
       # ── GitHub Release ────────────────────────────────────────────────────
@@ -81,14 +89,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            "${{ steps.apk.outputs.dest }}" \
+            release/*.apk \
             --title "CallSync Client ${{ steps.version.outputs.version }}" \
             --notes "## CallSync Client ${{ steps.version.outputs.version }}
 
           Build automatique depuis \`main\`.
 
+          Les APK sont séparées par architecture Android pour réduire la taille du téléchargement.
+
           ### Installation
-          1. Télécharger \`${{ steps.apk.outputs.dest }}\`
+          1. Télécharger l’APK correspondant à l’architecture du téléphone
           2. Ouvrir le fichier sur Android
           3. Autoriser l'installation depuis sources inconnues si demandé" \
             --latest

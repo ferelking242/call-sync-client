@@ -12,7 +12,8 @@
     <application
         android:label="CallSync Client"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
 

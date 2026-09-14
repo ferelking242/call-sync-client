@@ -38,17 +38,16 @@ if [ "${1:-}" != "" ]; then
   export KEY_PASSWORD="${4:-}"
 fi
 
-flutter build apk --release \
+flutter build apk --release --split-per-abi \
   --obfuscate \
   --split-debug-info=build/debug-info \
   --tree-shake-icons
 
-APK="build/app/outputs/flutter-apk/app-release.apk"
+APK_DIR="build/app/outputs/flutter-apk"
 
 echo ""
 echo "✅  Build complete!"
-echo "   APK : $APK"
-echo "   Size: $(du -sh "$APK" | cut -f1)"
+find "$APK_DIR" -name '*-release.apk' -maxdepth 1 -print -exec du -h {} \;
 echo ""
 echo "Install on connected device:"
-echo "   adb install -r $APK"
+echo "   adb install -r $APK_DIR/app-arm64-v8a-release.apk"
