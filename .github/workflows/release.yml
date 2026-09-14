@@ -66,6 +66,7 @@ jobs:
             DEST="release/callsync-client-${{ steps.version.outputs.version }}-${ABI}.apk"
             cp "$APK" "$DEST"
             echo "Found: $DEST  ($(du -sh "$APK" | cut -f1))"
+          done
 
       # ── Upload as workflow artifact ───────────────────────────────────────
       - name: Upload APK artifact
