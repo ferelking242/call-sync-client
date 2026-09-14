@@ -62,7 +62,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveServer() async {
     setState(() => _saving = true);
-    final ok = await context.read<SyncService>().connectServer(
+    final sync = context.read<SyncService>();
+    final ok = await sync.connectServer(
           url: _urlCtrl.text,
           username: _usernameCtrl.text,
           password: _passwordCtrl.text,
@@ -70,7 +71,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) {
       setState(() => _saving = false);
       _showSnack(
-        ok ? '✓ Serveur connecté et fichiers synchronisés' : 'Serveur inaccessible',
+        ok
+            ? '✓ Serveur connecté et fichiers synchronisés'
+            : sync.lastError ?? 'Serveur inaccessible',
         isError: !ok,
       );
       if (ok) Navigator.pop(context);

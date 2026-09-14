@@ -200,6 +200,9 @@ class P2pApi {
     if (relay == null || relay.isEmpty) {
       throw const SocketException('Relais P2P non configuré');
     }
+    final requestTimeout = request['type'] == 'download'
+        ? const Duration(seconds: 130)
+        : const Duration(seconds: 30);
     final response = await http
         .post(
           Uri.parse('${relay.replaceFirst(RegExp(r'/$'), '')}/p2p/client/request'),
@@ -210,7 +213,7 @@ class P2pApi {
             'request': request,
           }),
         )
-        .timeout(const Duration(seconds: 130));
+        .timeout(requestTimeout);
     final body = jsonDecode(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(body is Map ? body['error'] ?? 'Relais indisponible' : 'Relais indisponible');

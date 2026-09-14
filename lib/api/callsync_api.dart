@@ -8,9 +8,20 @@ class CallSyncApi {
   final String token;
 
   CallSyncApi({required String baseUrl, required this.token})
-      : baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), '');
+      : baseUrl = normalizeBaseUrl(baseUrl);
 
-  static String _clean(String url) => url.replaceAll(RegExp(r'/+$'), '');
+  static String normalizeBaseUrl(String rawUrl) {
+    final url = rawUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(url);
+    if (url.isEmpty ||
+        uri == null ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw const FormatException(
+          'Adresse invalide : utilisez une URL complète en http:// ou https://');
+    }
+    return url;
+  }
 
   Map<String, String> get _headers => {
     'Authorization': 'Bearer $token',
@@ -19,11 +30,24 @@ class CallSyncApi {
 
   // ── Health ────────────────────────────────────────────────────────────────
 
+  static Future<Map<String, dynamic>> checkServer(String rawUrl) async {
+    final url = normalizeBaseUrl(rawUrl);
+    final r = await http.get(Uri.parse('$url/health'))
+        .timeout(const Duration(seconds: 10));
+    if (r.statusCode != 200) {
+      throw HttpException('Serveur HTTP ${r.statusCode}');
+    }
+    final body = jsonDecode(r.body);
+    if (body is! Map<String, dynamic> || body['status'] != 'healthy') {
+      throw const HttpException('Réponse de santé du serveur invalide');
+    }
+    return body;
+  }
+
   Future<bool> checkHealth() async {
     try {
-      final r = await http.get(Uri.parse('$baseUrl/health'))
-          .timeout(const Duration(seconds: 10));
-      return r.statusCode == 200;
+      await checkServer(baseUrl);
+      return true;
     } catch (_) {
       return false;
     }
@@ -31,21 +55,24 @@ class CallSyncApi {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
 
-  static Future<String?> login(String baseUrl, String username, String password) async {
-    final url = _clean(baseUrl);
-    try {
-      final r = await http.post(
-        Uri.parse('$url/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'username': username, 'password': password}),
-      ).timeout(const Duration(seconds: 15));
-      if (r.statusCode == 200) {
-        return (jsonDecode(r.body) as Map<String, dynamic>)['token'] as String?;
-      }
-      return null;
-    } catch (_) {
-      return null;
+  static Future<String> login(
+      String rawUrl, String username, String password) async {
+    final url = normalizeBaseUrl(rawUrl);
+    final r = await http.post(
+      Uri.parse('$url/login'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'username': username, 'password': password}),
+    ).timeout(const Duration(seconds: 15));
+    final body = jsonDecode(r.body);
+    if (r.statusCode != 200) {
+      final message = body is Map<String, dynamic> ? body['error'] : null;
+      throw HttpException(
+          'Connexion refusée (${r.statusCode})${message == null ? '' : ': $message'}');
     }
+    if (body is! Map<String, dynamic> || body['token'] is! String) {
+      throw const HttpException('Réponse de connexion invalide');
+    }
+    return body['token'] as String;
   }
 
   // ── Records ───────────────────────────────────────────────────────────────

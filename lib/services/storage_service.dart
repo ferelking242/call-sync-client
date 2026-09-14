@@ -12,14 +12,26 @@ class StorageService {
   static const _keyServerUsername = 'server_username_v1';
   static const _keyServerPassword = 'server_password_v1';
 
-  static const defaultServerUrl =
-      'https://vapid-pleasing-drawings--koyih59365.replit.app';
+  // Can be overridden for a published build with:
+  // --dart-define=CALLSYNC_SERVER_URL=https://your-server.replit.app
+  static const defaultServerUrl = String.fromEnvironment(
+    'CALLSYNC_SERVER_URL',
+    defaultValue:
+        'https://31b0ba36-e0f2-4a05-b3ce-726e52bd0b20-00-3qeptdt544x1d.riker.replit.dev',
+  );
   static const defaultServerUsername = 'admin';
-  static const defaultServerPassword = 'admin123';
+  static const defaultServerPassword = 'admin';
+  static const _legacyServerUrl =
+      'vapid-pleasing-drawings--koyih59365.replit.app';
 
   static Future<String> getServerUrl() async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_keyServerUrl) ?? defaultServerUrl;
+    final saved = p.getString(_keyServerUrl)?.trim();
+    if (saved == null || saved.isEmpty || saved.contains(_legacyServerUrl)) {
+      await p.setString(_keyServerUrl, defaultServerUrl);
+      return defaultServerUrl;
+    }
+    return saved;
   }
 
   static Future<String> getServerUsername() async {
@@ -29,7 +41,12 @@ class StorageService {
 
   static Future<String> getServerPassword() async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_keyServerPassword) ?? defaultServerPassword;
+    final saved = p.getString(_keyServerPassword);
+    if (saved == null || saved.isEmpty || saved == 'admin123') {
+      await p.setString(_keyServerPassword, defaultServerPassword);
+      return defaultServerPassword;
+    }
+    return saved;
   }
 
   static Future<void> setServerConfig({

@@ -59,10 +59,9 @@ class SyncService extends ChangeNotifier {
     }
 
     try {
-      final token = await CallSyncApi.login(cleanUrl, username.trim(), password);
-      if (token == null || token.isEmpty) {
-        throw const HttpException('Identifiants refusés par le serveur');
-      }
+      await CallSyncApi.checkServer(cleanUrl);
+      final token =
+          await CallSyncApi.login(cleanUrl, username.trim(), password);
       _serverApi = CallSyncApi(baseUrl: cleanUrl, token: token);
       _api = null;
       _peer = null;
@@ -79,8 +78,8 @@ class SyncService extends ChangeNotifier {
       return true;
     } catch (error) {
       _serverApi = null;
-      _lastError = error.toString();
-      _setStatus(SyncStatus.error, 'Serveur inaccessible');
+      _lastError = _describeError(error);
+      _setStatus(SyncStatus.error, 'Serveur inaccessible — $_lastError');
       return false;
     }
   }
@@ -114,14 +113,19 @@ class SyncService extends ChangeNotifier {
       final url = await StorageService.getServerUrl();
       final username = await StorageService.getServerUsername();
       final password = await StorageService.getServerPassword();
-      final serverOk = await connectServer(
-        url: url,
-        username: username,
-        password: password,
-      );
-      if (serverOk) return true;
+      final serverUrl = url.trim();
+      if (serverUrl.isNotEmpty) {
+        // A configured server is authoritative. Do not silently fall back to
+        // P2P when it is unavailable; that created a confusing P2P spinner
+        // while the user was trying to connect to the server.
+        return await connectServer(
+          url: serverUrl,
+          username: username,
+          password: password,
+        );
+      }
 
-      // Keep the old P2P pairing as a real fallback, not the only mode.
+      // P2P pairing remains available through its explicit button in Settings.
       final profile = await StorageService.getPeer();
       if (profile != null) return await connectPeer(profile);
       return false;
@@ -327,5 +331,14 @@ class SyncService extends ChangeNotifier {
     _status = status;
     _statusMessage = message;
     notifyListeners();
+  }
+
+  String _describeError(Object error) {
+    if (error is HttpException) return error.message;
+    if (error is FormatException) return error.message;
+    if (error is SocketException) {
+      return 'Connexion réseau impossible (${error.osError?.message ?? error.message})';
+    }
+    return error.toString().replaceFirst('Exception: ', '');
   }
 }
