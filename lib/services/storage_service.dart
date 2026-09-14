@@ -17,17 +17,22 @@ class StorageService {
   static const defaultServerUrl = String.fromEnvironment(
     'CALLSYNC_SERVER_URL',
     defaultValue:
-        'https://31b0ba36-e0f2-4a05-b3ce-726e52bd0b20-00-3qeptdt544x1d.riker.replit.dev',
+        'https://firsthand-wicked-fiber--noveb27831.replit.app',
   );
   static const defaultServerUsername = 'admin';
-  static const defaultServerPassword = 'admin';
+  static const defaultServerPassword = 'admin123';
   static const _legacyServerUrl =
       'vapid-pleasing-drawings--koyih59365.replit.app';
+  static const _legacyDevServerUrl =
+      '31b0ba36-e0f2-4a05-b3ce-726e52bd0b20-00-3qeptdt544x1d.riker.replit.dev';
 
   static Future<String> getServerUrl() async {
     final p = await SharedPreferences.getInstance();
     final saved = p.getString(_keyServerUrl)?.trim();
-    if (saved == null || saved.isEmpty || saved.contains(_legacyServerUrl)) {
+    if (saved == null ||
+        saved.isEmpty ||
+        saved.contains(_legacyServerUrl) ||
+        saved.contains(_legacyDevServerUrl)) {
       await p.setString(_keyServerUrl, defaultServerUrl);
       return defaultServerUrl;
     }
@@ -42,7 +47,7 @@ class StorageService {
   static Future<String> getServerPassword() async {
     final p = await SharedPreferences.getInstance();
     final saved = p.getString(_keyServerPassword);
-    if (saved == null || saved.isEmpty || saved == 'admin123') {
+    if (saved == null || saved.isEmpty || saved == 'admin') {
       await p.setString(_keyServerPassword, defaultServerPassword);
       return defaultServerPassword;
     }
